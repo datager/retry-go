@@ -112,6 +112,8 @@ func (t *timerImpl) After(d time.Duration) <-chan time.Time {
 
 func Do(retryableFunc RetryableFunc, opts ...Option) error {
 	retryableFuncWithData := func() (any, error) {
+		// 执行 retryableFunc() 会返回 error
+		// 再封装一个 any, 连同 error 一起返回
 		return nil, retryableFunc()
 	}
 
@@ -167,28 +169,36 @@ func DoWithData[T any](retryableFunc RetryableFuncWithData[T], opts ...Option) (
 		}
 	}
 
-	errorLog := Error{}
+	// 主流程开始
+	errorLog := Error{} // 这是一个数组, 记录了所有的错误
 
+	// 因为后续会修改 attempts 值, 所以这里先拷贝一份, 后续使用拷贝的那一份
 	attemptsForError := make(map[error]uint, len(config.attemptsForError))
 	for err, attempts := range config.attemptsForError {
 		attemptsForError[err] = attempts
 	}
 
-	shouldRetry := true
+	shouldRetry := true // 当超出重试次数时, 会退出循环
 	for shouldRetry {
+		// 执行用户传入的主流程函数, 我们要重试的就是他
 		t, err := retryableFunc()
+		// 如果执行成功了, 直接返回, 不需要再重试了
 		if err == nil {
 			return t, nil
 		}
 
+		// 追加 error
 		errorLog = append(errorLog, unpackUnrecoverable(err))
 
+		// 用户可以自定义回调函数, 即根据返回的 err 判断是否需要重试
 		if !config.retryIf(err) {
 			break
 		}
 
+		// 当重试时, 需要执行的回调函数, 用户可以自定义
 		config.onRetry(n, err)
 
+		// 用户可以设置某种 err 需要重试几次. 此处会判断返回的 err 并减少需要重试的次数
 		for errToCheck, attempts := range attemptsForError {
 			if errors.Is(err, errToCheck) {
 				attempts--
@@ -197,14 +207,15 @@ func DoWithData[T any](retryableFunc RetryableFuncWithData[T], opts ...Option) (
 			}
 		}
 
+		// 既然最后一次 retryableFunc() 已经执行完了, 那就不需要再等待了
 		// if this is last attempt - don't wait
 		if n == config.attempts-1 {
 			break
 		}
 
 		select {
-		case <-config.timer.After(delay(config, n, err)):
-		case <-config.context.Done():
+		case <-config.timer.After(delay(config, n, err)): // 等待一段时间后再重试
+		case <-config.context.Done(): // 如果用户把 context Done() 了, 则退出即可. 通常原因是用户主动 ctx.Cancel() 或者 ctx.Timeout() 自己到达了
 			if config.lastErrorOnly {
 				return emptyT, config.context.Err()
 			}
@@ -213,11 +224,11 @@ func DoWithData[T any](retryableFunc RetryableFuncWithData[T], opts ...Option) (
 		}
 
 		n++
-		shouldRetry = shouldRetry && n < config.attempts
+		shouldRetry = shouldRetry && n < config.attempts // 总的 attempts 次数也会控制是否需要重试
 	}
 
 	if config.lastErrorOnly {
-		return emptyT, errorLog.Unwrap()
+		return emptyT, errorLog.Unwrap() // 这个 errorLog 其实是一个数组, Unwrap() 其实就是返回数组的最后一项
 	}
 	return emptyT, errorLog
 }
@@ -229,7 +240,7 @@ func newDefaultRetryConfig() *Config {
 		delay:            100 * time.Millisecond,
 		maxJitter:        100 * time.Millisecond,
 		onRetry:          func(n uint, err error) {},
-		retryIf:          IsRecoverable,
+		retryIf:          IsRecoverable, // 通过自定义类型实现
 		delayType:        CombineDelay(BackOffDelay, RandomDelay),
 		lastErrorOnly:    false,
 		context:          context.Background(),

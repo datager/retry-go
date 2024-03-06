@@ -7,13 +7,17 @@ import (
 	"time"
 )
 
+// 什么时机 retry. 即如果是某种 err 则 retry
 // Function signature of retry if function
 type RetryIfFunc func(error) bool
 
+// retry 时做什么. 可以利用重试次数 n 和 err 来做一些事情
 // Function signature of OnRetry function
 // n = count of attempts
 type OnRetryFunc func(n uint, err error)
 
+// 当 执行函数 对某 err 失败了 n 次时, 此函数会返回下次 delay 的 time.Duration
+// 用途不明确
 // DelayTypeFunc is called to return the next delay to wait after the retriable function fails on `err` after `n` attempts.
 type DelayTypeFunc func(n uint, err error, config *Config) time.Duration
 
@@ -23,29 +27,36 @@ type Timer interface {
 }
 
 type Config struct {
-	attempts                      uint
-	attemptsForError              map[error]uint
-	delay                         time.Duration
-	maxDelay                      time.Duration
-	maxJitter                     time.Duration
-	onRetry                       OnRetryFunc
-	retryIf                       RetryIfFunc
-	delayType                     DelayTypeFunc
-	lastErrorOnly                 bool
-	context                       context.Context
-	timer                         Timer
-	wrapContextErrorWithLastError bool
+	attempts                      uint            // 重试几次
+	attemptsForError              map[error]uint  // 各错误重试几次
+	delay                         time.Duration   // 延迟多久
+	maxDelay                      time.Duration   // 最多延迟多久的阈值
+	maxJitter                     time.Duration   // todo 抖动是什么
+	onRetry                       OnRetryFunc     // retry 时做什么
+	retryIf                       RetryIfFunc     // 什么时机 retry
+	delayType                     DelayTypeFunc   // todo 有什么用
+	lastErrorOnly                 bool            // 只记录最后的 error
+	context                       context.Context // 上下文
+	timer                         Timer           // todo 貌似只有单测使用
+	wrapContextErrorWithLastError bool            // todo 有什么用
 
-	maxBackOffN uint
+	maxBackOffN uint // 最多 backoff n 次
 }
 
 // Option represents an option for retry.
+// 函数方法, 标识一种操作, 传入 Config 指针, 修改它
+// 经常被闭包包围
 type Option func(*Config)
 
-func emptyOption(c *Config) {}
+// 一种实现, 什么也不做
+func emptyOption(c *Config) {
+	// 空函数体实现
+}
 
 // return the direct last error that came from the retried function
 // default is false (return wrapped errors with everything)
+// 闭包包围了 Option, 并返回了 Option
+// 外层函数传入的 lastErrorOnly 被内层闭包函数捕获
 func LastErrorOnly(lastErrorOnly bool) Option {
 	return func(c *Config) {
 		c.lastErrorOnly = lastErrorOnly
